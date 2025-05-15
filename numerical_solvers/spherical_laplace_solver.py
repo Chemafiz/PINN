@@ -8,13 +8,53 @@ import os
 
 
 
-def apply_boundary_conditions(N, nr, ntheta, vmin=0.0, vmax=1.0):
+def apply_boundary_conditions_constant_value(N, nr, ntheta, vmin=0.0, vmax=1.0):
     laplace_solutions = np.zeros((N, nr, ntheta))
     
     boundary_conditions = np.random.uniform(vmin, vmax, size=(N, 1)) 
     laplace_solutions[:, -1, :] = boundary_conditions 
 
     return laplace_solutions, boundary_conditions
+
+
+def apply_boundary_conditions_sinusoidal(N, nr, ntheta, amp_min=1.0, amp_max=10.0, freq_min=1, freq_max=10):
+    laplace_solutions = np.zeros((N, nr, ntheta))
+    boundary_conditions = np.zeros((N, 2))
+
+    for i in range(N):
+        amplitude = np.random.uniform(amp_min, amp_max)
+        num_cycles = np.random.randint(freq_min, freq_max + 1)
+
+        # Zapewnij pełne cykle na brzegu (czyli zapętlony sin)
+        theta = np.linspace(0, 2 * np.pi, ntheta, endpoint=False)  # endpoint=False by uniknąć duplikatu na końcu
+        boundary = amplitude * np.sin(num_cycles * theta)
+
+        laplace_solutions[i, -1, :] = boundary
+        boundary_conditions[i, :] = amplitude, num_cycles
+
+    return laplace_solutions, boundary_conditions
+
+
+def apply_boundary_conditions_sinusoidal_interp(N, nr, ntheta, amp_min=1.0, amp_max=10.0, freq_min=1, freq_max=10, ntheta_high=500):
+    laplace_solutions = np.zeros((N, nr, ntheta))
+    boundary_params = np.zeros((N, 2))
+
+    theta_high = np.linspace(0, 2*np.pi, ntheta_high, endpoint=False)
+    theta_target = np.linspace(0, 2*np.pi, ntheta, endpoint=False)
+
+    for i in range(N):
+        amplitude = np.random.uniform(amp_min, amp_max)
+        num_cycles = np.random.randint(freq_min, freq_max + 1)
+
+        high_res_boundary = amplitude * np.sin(num_cycles * theta_high)
+
+        # Interpolacja z ntheta_high -> ntheta
+        interpolated = np.interp(theta_target, theta_high, high_res_boundary)
+
+        laplace_solutions[i, -1, :] = interpolated
+        boundary_params[i, :] = amplitude, num_cycles
+
+    return laplace_solutions, boundary_params
 
 
 @njit(parallel=True)
@@ -138,20 +178,21 @@ def visualize_solution(laplace_solution):
 
 
 if __name__ == "__main__":
-    N = 1000
-    chunk_size = 100
+    N = 10
+    chunk_size = 1
     nr = 100
-    ntheta = 100
+    ntheta = 200
     r_min, r_max = 0, 10
 
     r = np.linspace(r_min, r_max, nr)
     theta = np.linspace(0, 2*np.pi, ntheta)
-    # dr = r[1] - r[0]
-    # dtheta = theta[1] - theta[0]
-    dr = (r_max - r_min) / (nr - 1)
-    dtheta = 2 * np.pi / ntheta
+    dr = r[1] - r[0]
+    dtheta = theta[1] - theta[0]
+    # dr = (r_max - r_min) / (nr - 1)
+    # dtheta = 2 * np.pi / ntheta
 
-    laplace_solutions, boundary_conditions = apply_boundary_conditions(N, nr, ntheta, vmin=-10.0, vmax=10.0)
+    # laplace_solutions, boundary_conditions = apply_boundary_conditions_constant_value(N, nr, ntheta, vmin=-100.0, vmax=100.0)
+    laplace_solutions, boundary_conditions =  apply_boundary_conditions_sinusoidal(N, nr, ntheta, amp_min=1.0, amp_max=100.0, freq_min=1, freq_max=10)
 
     for start_idx in range(0, N, chunk_size):
         start_time = time.time()
@@ -161,14 +202,15 @@ if __name__ == "__main__":
 
 
     
-    # for i in range(4):
-    #     visualize_solution(laplace_solution=laplace_solutions[i])
+    for i in range(4):
+        visualize_solution(laplace_solution=laplace_solutions[i])
 
-    save_path = 'solutions/polar/'
-    os.makedirs(save_path, exist_ok=True)
-    laplace_solutions = laplace_solutions.astype(np.float32)
-    boundary_conditions = boundary_conditions.astype(np.float32)
-    np.savez_compressed(save_path + 'solutions.npz', laplace_solutions=laplace_solutions, boundary_conditions=boundary_conditions)
+
+    # save_path = 'solutions/polar/'
+    # os.makedirs(save_path, exist_ok=True)
+    # laplace_solutions = laplace_solutions.astype(np.float32)
+    # boundary_conditions = boundary_conditions.astype(np.float32)
+    # np.savez_compressed(save_path + 'solutions.npz', laplace_solutions=laplace_solutions, boundary_conditions=boundary_conditions)
 
 
 

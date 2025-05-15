@@ -1,69 +1,72 @@
 import numpy as np
+from numba import njit, prange
+import time
 import matplotlib.pyplot as plt
 
-# Parametry siatki
-Nr = 20         # liczba punktów w r
-Ntheta = 20     # liczba punktów w theta (pełny obrót)
-r_min = 0.0
-r_max = 5.0
-dr = (r_max - r_min) / (Nr - 1)
-dtheta = 2 * np.pi / Ntheta
 
-# Tworzenie siatki
-u = np.zeros((Nr, Ntheta)) # pole u
-r = np.linspace(r_min, r_max, Nr)  # siatka r
+def downsample(data, target_len):
+    original_len = len(data)
+    scale = original_len / target_len
+    downsampled = np.zeros(target_len, dtype=np.float32)
 
-# Warunki brzegowe
-u[-1, :] = 10.0  # Na brzegu koła (r=10) u = 10
+    for i in range(target_len):
+        start = int(np.floor(i * scale))
+        end = int(np.floor((i + 1) * scale))
 
-# Iteracyjna relaksacja
-for iteration in range(2000):
-    u_new = np.copy(u)
-    for i in range(1, Nr-1):         # pomijamy i=0 (środek) i i=Nr-1 (brzeg, bo tam mamy warunek brzegowy)
-        for j in range(Ntheta):
-            ip = i + 1
-            im = i - 1
-            jp = (j + 1) % Ntheta    # cykliczne po theta
-            jm = (j - 1) % Ntheta
+        # Liczba punktów w przedziale
+        count = end - start if end > start else original_len - start + end
 
-           
-            coef_r = (1 + dr / (2 * r[i]))
-            coef_l = (1 - dr / (2 * r[i]))
-            coef_theta = (dr ** 2) / (r[i] ** 2 * dtheta ** 2)
-            denom = 2 + 2 * coef_theta
+        # Zbieramy wartości z zawinięciem
+        indices = [(start + j) % original_len for j in range(count)]
+        downsampled[i] = np.mean([data[idx] for idx in indices])
 
-            u_new[i, j] = (1 / denom) * (
-                coef_r * u[ip, j] +
-                coef_l * u[im, j] +
-                coef_theta * (u[i, jp] + u[i, jm])
-            )
+    return downsampled
 
-            u_new[0, j] = 0.25 * (u[1, j] + u[0, jp] + u[0, jm] + u[1, jp])
 
-        
-    if iteration % 100 == 0:
-            max_diff = np.max(np.abs(u - u_new))
-            print(f"error = {max_diff}")
+def upsample(data, target_len):
+    original_len = len(data)
+    scale = original_len / target_len
+    upsampled = np.zeros(target_len, dtype=np.float32)
 
-    u = u_new
+    for i in range(target_len):
+        pos = i * scale
+        idx_low = int(np.floor(pos)) % original_len
+        idx_high = (idx_low + 1) % original_len
 
-# Zakładając, że masz już r, Ntheta, u, r_min, r_max, Nr zdefiniowane
-r_edges = np.linspace(r_min, r_max, Nr + 1)  # Krawędzie dla r
-theta_edges = np.linspace(0, 2 * np.pi, Ntheta + 1)  # Krawędzie dla theta
+        weight_high = pos - np.floor(pos)
+        weight_low = 1.0 - weight_high
 
-# Stworzenie siatki dla współrzędnych r, theta
-R, Theta = np.meshgrid(r_edges, theta_edges)
+        upsampled[i] = data[idx_low] * weight_low + data[idx_high] * weight_high
 
-# Przekształcenie do współrzędnych kartezjańskich
-X = R * np.cos(Theta)
-Y = R * np.sin(Theta)
+    return upsampled
 
-# Tworzenie wykresu
-plt.figure(figsize=(8,6))
-plt.pcolormesh(X, Y, u.T, shading='auto', cmap='inferno')  # Teraz z krawędziami
-plt.colorbar(label='u(r, θ)')
-plt.title('Rozwiązanie równania Laplace\'a w kole o promieniu 10')
-plt.xlabel('x')
-plt.ylabel('y')
-plt.axis('equal')
-plt.show()
+@njit
+def dupa(arr):
+    return np.count_nonzero(np.isnan(arr), axis=1)
+
+
+if __name__ == "__main__":
+    x = np.linspace(0, 2 * np.pi, 100, endpoint=False)
+    y = np.sin(x)
+
+    y_down = downsample(y, 90)
+    x_down = np.linspace(0, 2 * np.pi, 90, endpoint=False)
+
+    x = np.linspace(0, 2 * np.pi, 20, endpoint=False)
+    y = np.sin(x)
+
+    y_up= upsample(y, 100)
+    x_up = np.linspace(0, 2 * np.pi, 100, endpoint=False)
+    
+
+    # plt.plot(x, y)
+    # # plt.scatter(x_down, y_down, s=1)
+    # plt.scatter(x_up, y_up, s=1)
+    # plt.show()
+
+    temp = np.array([
+        [1,np.nan,3],
+        [1,2,3],
+        [1,np.nan,3],
+        ])
+    print(dupa(temp))
