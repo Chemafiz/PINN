@@ -1,216 +1,130 @@
 import numpy as np
-from numba import njit, prange
-import time
-from collections import namedtuple
-from functools import partial
+from scipy.special import sph_harm_y
+import plotly.graph_objects as go
+from scipy.interpolate import griddata
+
+# Promień wewnętrzny i zewnętrzny sfery
+a = 0.2      # np. 1 metr
+R = 1.0      # np. 2 metry
+
+# Liczba punktów siatki w każdym wymiarze
+Nr = 50     # liczba punktów w kierunku radialnym
+Ntheta = 50 # liczba punktów w kierunku θ
+Nphi = 50   # liczba punktów w kierunku φ
+
+r = np.linspace(a, R, Nr)
+theta = np.linspace(0, np.pi, Ntheta)
+phi = np.linspace(0, 2 * np.pi, Nphi, endpoint=False)
+
+# Siatka 3D: r, theta, phi – użyjemy 'ij' żeby zachować porządek (r, θ, φ)
+R_grid, Theta_grid, Phi_grid = np.meshgrid(r, theta, phi, indexing='ij')
+V = np.full((Nr, Ntheta, Nphi), np.nan)  
+
+
+
+
+# Zastosowanie warunku brzegowego na zewnętrznej sferze r = R
+V[-1, :, :] = np.sin(5 * Phi_grid[-1, :, :])
+C = 1.0  # potencjał na wewnętrznej kuli
+V[0, :, :] = C
+
+
+
+L_max = 10  # maksymalny rząd rozwinięcia
+c_lm = {}   # współczynniki c_{lm}
+
+# Wartość funkcji brzegowej na sferze r = R
+f_theta_phi = np.sin(5 * Phi_grid[-1, :, :])  # shape: (Ntheta, Nphi)
+
+# Siatka do całkowania (theta, phi)
+dtheta = theta[1] - theta[0]
+dphi = phi[1] - phi[0]
+theta_grid, phi_grid = np.meshgrid(theta, phi, indexing='ij')  # shape: (Ntheta, Nphi)
+
+# Oblicz współczynniki c_{lm}
+for l in range(L_max + 1):
+    for m in range(-l, l + 1):
+        Y_lm = sph_harm_y(m, l, phi_grid, theta_grid)  # shape: (Ntheta, Nphi)
+        integrand = f_theta_phi * np.conj(Y_lm) * np.sin(theta_grid)
+        c = np.sum(integrand) * dtheta * dphi
+        c_lm[(l, m)] = c
+
+
+
+
+
+A_lm = {}
+B_lm = {}
+
+for (l, m), c in c_lm.items():
+    if l == 0 and m == 0:
+        # Układ równań dla l=0, m=0
+        A = np.array([[1, a**(-1)],
+                      [1, R**(-1)]])
+        b = np.array([C, c])
+        A00, B00 = np.linalg.solve(A, b)
+        A_lm[(0, 0)] = A00
+        B_lm[(0, 0)] = B00
+    else:
+        denom = R**l - a**(2*l + 1) * R**(-l - 1)
+        if denom == 0:
+            A_val = 0
+        else:
+            A_val = c / denom
+        B_val = -A_val * a**(2*l + 1)
+        A_lm[(l, m)] = A_val
+        B_lm[(l, m)] = B_val
+
+
+for l in range(L_max + 1):
+    for m in range(-l, l + 1):
+        A = A_lm[(l, m)]
+        B = B_lm[(l, m)]
+
+        # Część radialna
+        radial_part = A * R_grid**l + B * R_grid**(-(l + 1))
+
+        # Harmonica sferyczna
+        Y_lm = sph_harm_y(m, l, Phi_grid, Theta_grid)
+
+        # Dodaj wkład do potencjału – tylko rzeczywista część
+        V += np.real(radial_part * Y_lm)
+
+
+
+
+
+V_boundary_numeric = V[-1, :, :]  # r = R
+V_boundary_expected = np.sin(5 * Phi_grid[-1, :, :])
+
+max_diff = np.max(np.abs(V_boundary_numeric - V_boundary_expected))
+print("Maksymalny błąd na zewnętrznej sferze:", max_diff)
+
+
+# Środek siatki
+i = Nr // 2
+j = Ntheta // 2
+k = Nphi // 2
+
+laplace_approx = (
+    V[i+1, j, k] + V[i-1, j, k] +
+    V[i, j+1, k] + V[i, j-1, k] +
+    V[i, j, k+1] + V[i, j, k-1] -
+    6 * V[i, j, k]
+)
+
+print("Przybliżona Laplasjana w środku sfery:", laplace_approx)
+
+
 import matplotlib.pyplot as plt
-import os
 
+# Przekrój r–phi w płaszczyźnie θ = π/2 (środkowy indeks)
+theta_idx = Ntheta // 2
 
-
-def apply_boundary_conditions_constant_value(N, nr, ntheta, vmin=0.0, vmax=1.0):
-    laplace_solutions = np.zeros((N, nr, ntheta))
-    
-    boundary_conditions = np.random.uniform(vmin, vmax, size=(N, 1)) 
-    laplace_solutions[:, -1, :] = boundary_conditions 
-
-    return laplace_solutions, boundary_conditions
-
-
-def apply_boundary_conditions_sinusoidal(N, nr, ntheta, amp_min=1.0, amp_max=10.0, freq_min=1, freq_max=10):
-    laplace_solutions = np.zeros((N, nr, ntheta))
-    boundary_conditions = np.zeros((N, 2))
-
-    for i in range(N):
-        amplitude = np.random.uniform(amp_min, amp_max)
-        num_cycles = np.random.randint(freq_min, freq_max + 1)
-
-        # Zapewnij pełne cykle na brzegu (czyli zapętlony sin)
-        theta = np.linspace(0, 2 * np.pi, ntheta, endpoint=False)  # endpoint=False by uniknąć duplikatu na końcu
-        boundary = amplitude * np.sin(num_cycles * theta)
-
-        laplace_solutions[i, -1, :] = boundary
-        boundary_conditions[i, :] = amplitude, num_cycles
-
-    return laplace_solutions, boundary_conditions
-
-
-def apply_boundary_conditions_sinusoidal_interp(N, nr, ntheta, amp_min=1.0, amp_max=10.0, freq_min=1, freq_max=10, ntheta_high=500):
-    laplace_solutions = np.zeros((N, nr, ntheta))
-    boundary_params = np.zeros((N, 2))
-
-    theta_high = np.linspace(0, 2*np.pi, ntheta_high, endpoint=False)
-    theta_target = np.linspace(0, 2*np.pi, ntheta, endpoint=False)
-
-    for i in range(N):
-        amplitude = np.random.uniform(amp_min, amp_max)
-        num_cycles = np.random.randint(freq_min, freq_max + 1)
-
-        high_res_boundary = amplitude * np.sin(num_cycles * theta_high)
-
-        # Interpolacja z ntheta_high -> ntheta
-        interpolated = np.interp(theta_target, theta_high, high_res_boundary)
-
-        laplace_solutions[i, -1, :] = interpolated
-        boundary_params[i, :] = amplitude, num_cycles
-
-    return laplace_solutions, boundary_params
-
-
-@njit(parallel=True)
-def generate_data(start_idx, chunk_size, laplace_solutions, r, dr, dtheta):
-    for i in prange(chunk_size):
-        idx = start_idx + i
-        laplace_solutions[idx] = laplace_solver_sor(laplace_solutions[idx], r, dr, dtheta, maxiter=100000, tol=1e-6)
-
-
-@njit(fastmath=True)
-def laplace_solver(u, r, dr, dtheta, maxiter=100000, tol=1e-6):
-    Nr, Ntheta = u.shape
-    ip = np.arange(1, Nr-1) + 1
-    im = np.arange(1, Nr-1) - 1
-    jp = (np.arange(Ntheta) + 1) % Ntheta
-    jm = (np.arange(Ntheta) - 1) % Ntheta
-
-    coef_r = 1 + dr / (2 * r[1:Nr-1])
-    coef_l = 1 - dr / (2 * r[1:Nr-1])
-    coef_theta = (dr ** 2) / (r[1:Nr-1] ** 2 * dtheta ** 2)
-    denom = 2 + 2 * coef_theta
-
-    coef_r = coef_r[:, None]
-    coef_l = coef_l[:, None]
-    coef_theta = coef_theta[:, None]
-    denom = 1 / denom[:, None]
-
-    u_new = u.copy()
-
-    for iteration in range(maxiter):
-        u_new[1:Nr-1, :] = denom * (
-            coef_r * u[ip, :] +
-            coef_l * u[im, :] +
-            coef_theta * (u[1:Nr-1, jp] + u[1:Nr-1, jm])
-        )
-
-        # u_new[0, :] = 0.25 * (u[1, :] + u[0, jp] + u[0, jm] + u[1, jp])
-        u_new[0, :] = u[1, :]
-
-        if iteration % 100 == 0:
-            if np.max(np.abs(u - u_new)) <= tol:
-                break
-
-        u, u_new = u_new, u
-
-    return u
-
-
-@njit(fastmath=True)
-def laplace_solver_sor(u, r, dr, dtheta, omega=1.9, maxiter=100000, tol=1e-6):
-    Nr, Ntheta = u.shape
-
-    dr2 = dr * dr
-    dtheta2 = dtheta * dtheta
-
-    for iteration in range(maxiter):
-        max_diff = 0.0
-
-        for i in range(1, Nr-1):
-            ri = r[i]
-            rip = r[i+1]
-            rim = r[i-1]
-
-            coef_r = (1 + dr / (2 * ri))
-            coef_l = (1 - dr / (2 * ri))
-            coef_theta = (dr2) / (ri * ri * dtheta2)
-            denom = 2 + 2 * coef_theta
-
-            for j in range(Ntheta):
-                jp = (j + 1) % Ntheta
-                jm = (j - 1) % Ntheta
-
-                u_new = (coef_r * u[i+1, j] + coef_l * u[i-1, j] + coef_theta * (u[i, jp] + u[i, jm])) / denom
-                diff = u_new - u[i, j]
-                u[i, j] += omega * diff
-
-                if np.abs(diff) > max_diff:
-                    max_diff = np.abs(diff)
-
-        # Obsługa środka r=0 osobno
-        for j in range(Ntheta):
-            jp = (j + 1) % Ntheta
-            jm = (j - 1) % Ntheta
-
-            u_new = 0.25 * (u[1, j] + u[0, jp] + u[0, jm] + u[1, jp])
-            diff = u_new - u[0, j]
-            u[0, j] += omega * diff
-
-            if np.abs(diff) > max_diff:
-                max_diff = np.abs(diff)
-
-        if iteration % 100 == 0:
-            if max_diff <= tol:
-                break
-
-    return u
-
-
-def visualize_solution(laplace_solution):
-    nr, ntheta = laplace_solution.shape
-
-    r_edges = np.linspace(r_min, r_max, nr + 1)  # Krawędzie dla r
-    theta_edges = np.linspace(0, 2 * np.pi, ntheta + 1)  # Krawędzie dla theta
-
-    # Stworzenie siatki dla współrzędnych r, theta
-    R, Theta = np.meshgrid(r_edges, theta_edges)
-
-    # Przekształcenie do współrzędnych kartezjańskich
-    X = R * np.cos(Theta)
-    Y = R * np.sin(Theta)
-
-    # Tworzenie wykresu
-    plt.figure(figsize=(8,6))
-    plt.pcolormesh(X, Y, laplace_solution.T, shading='auto', cmap='inferno')  # Teraz z krawędziami
-    plt.colorbar(label='u(r, θ)')
-    plt.title('Rozwiązanie równania Laplace\'a w kole o promieniu 10')
-    plt.xlabel('x')
-    plt.ylabel('y')
-    plt.axis('equal')
-    plt.show()
-
-
-if __name__ == "__main__":
-    N = 10
-    chunk_size = 1
-    nr = 100
-    ntheta = 200
-    r_min, r_max = 0, 10
-
-    r = np.linspace(r_min, r_max, nr)
-    theta = np.linspace(0, 2*np.pi, ntheta)
-    dr = r[1] - r[0]
-    dtheta = theta[1] - theta[0]
-    # dr = (r_max - r_min) / (nr - 1)
-    # dtheta = 2 * np.pi / ntheta
-
-    # laplace_solutions, boundary_conditions = apply_boundary_conditions_constant_value(N, nr, ntheta, vmin=-100.0, vmax=100.0)
-    laplace_solutions, boundary_conditions =  apply_boundary_conditions_sinusoidal(N, nr, ntheta, amp_min=1.0, amp_max=100.0, freq_min=1, freq_max=10)
-
-    for start_idx in range(0, N, chunk_size):
-        start_time = time.time()
-        generate_data(start_idx, chunk_size, laplace_solutions, r, dr, dtheta)
-        elapsed = time.time() - start_time
-        print(f"Generated {start_idx + chunk_size}/{N}  |  Last chunk time: {elapsed:.2f}s")
-
-
-    
-    for i in range(4):
-        visualize_solution(laplace_solution=laplace_solutions[i])
-
-
-    # save_path = 'solutions/polar/'
-    # os.makedirs(save_path, exist_ok=True)
-    # laplace_solutions = laplace_solutions.astype(np.float32)
-    # boundary_conditions = boundary_conditions.astype(np.float32)
-    # np.savez_compressed(save_path + 'solutions.npz', laplace_solutions=laplace_solutions, boundary_conditions=boundary_conditions)
-
-
-
+plt.figure(figsize=(8, 4))
+plt.imshow(V[:, theta_idx, :], extent=(0, 2*np.pi, a, R), aspect='auto', cmap='viridis')
+plt.colorbar(label='V(r, θ=π/2, φ)')
+plt.xlabel('φ')
+plt.ylabel('r')
+plt.title('Przekrój potencjału w płaszczyźnie θ=π/2')
+plt.show()
