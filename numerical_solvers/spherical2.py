@@ -180,8 +180,8 @@ if __name__ == "__main__":
 
 
     generate_train_samples(
-        N=1000, 
-        R_in_ranges=(0.01, 0.8),
+        N=2000, 
+        R_in_ranges=(0.5, 0.5),
         R_out=1.0,
         V_in_ranges=(-1, 1),
         N_theta=200,
