@@ -33,12 +33,12 @@ def apply_boundary_conditions_sinusoidal(
 
     theta = np.linspace(0, 2 * np.pi, ntheta, endpoint=False)  
     
-    theta_matrix = theta[np.newaxis, :]  # (1, ntheta)
-    freq_matrix = frequencies[:, np.newaxis]  # (N, 1)
-    amp_matrix = amplitudes[:, np.newaxis]  # (N, 1)
-    bias_matrix = biases[:, np.newaxis]     # (N, 1)
+    theta_matrix = theta[np.newaxis, :]  
+    freq_matrix = frequencies[:, np.newaxis]  
+    amp_matrix = amplitudes[:, np.newaxis] 
+    bias_matrix = biases[:, np.newaxis]    
 
-    boundary_values = amp_matrix * np.sin(freq_matrix * theta_matrix) + bias_matrix  # shape: (N, ntheta)
+    boundary_values = amp_matrix * np.sin(freq_matrix * theta_matrix) + bias_matrix 
 
     laplace_solutions[:, -1, :] = boundary_values
     boundary_conditions[:, 0] = amplitudes
@@ -56,7 +56,6 @@ def add_central_hole(laplace_solutions, boundary_conditions, r_min=0.05, r_max=0
     for i in range(N):
         laplace_solutions[i, radius_indices[i], :] = 0.0  
 
-    # Doklej promień jako nową kolumnę do boundary_conditions
     boundary_conditions = np.concatenate([boundary_conditions, zero_radius[:, np.newaxis]], axis=1)
 
     return laplace_solutions, boundary_conditions
@@ -106,7 +105,6 @@ def laplace_solver(u, r, dr, dtheta, maxiter=100000, tol=1e-6):
             coef_theta * (u[1:Nr-1, jp] + u[1:Nr-1, jm])
         )
 
-        # u_new[0, :] = 0.25 * (u[1, :] + u[0, jp] + u[0, jm] + u[1, jp])
         u_new[0, :] = u[1, :]
 
         if iteration % 100 == 0:
@@ -149,18 +147,6 @@ def laplace_solver_sor(u, r, dr, dtheta, omega=1.9, maxiter=100000, tol=1e-6):
                 if np.abs(diff) > max_diff:
                     max_diff = np.abs(diff)
 
-        # # Obsługa środka r=0 osobno
-        # for j in range(Ntheta):
-        #     jp = (j + 1) % Ntheta
-        #     jm = (j - 1) % Ntheta
-
-        #     u_new = 0.25 * (u[1, j] + u[0, jp] + u[0, jm] + u[1, jp])
-        #     diff = u_new - u[0, j]
-        #     u[0, j] += omega * diff
-
-        #     if np.abs(diff) > max_diff:
-        #         max_diff = np.abs(diff)
-
         if iteration % 100 == 0:
             if max_diff <= tol:
                 break
@@ -178,9 +164,6 @@ def laplace_solver_sor_hole(u, r, dr, dtheta, zero_circle_idx=-1, omega=1.9, max
         max_diff = 0.0
 
         for i in range(1, Nr - 1):
-            if i == zero_circle_idx:
-                continue  # Pomijamy ustalony promień
-
             ri = r[i]
 
             coef_r = (1 + dr / (2 * ri))
@@ -224,7 +207,7 @@ def visualize_solution(laplace_solution):
 
     # Tworzenie wykresu
     plt.figure(figsize=(8,6))
-    plt.pcolormesh(X, Y, laplace_solution.T, shading='auto', cmap='inferno')  # Teraz z krawędziami
+    plt.pcolormesh(X, Y, laplace_solution.T, shading='auto', cmap='inferno')
     plt.colorbar(label='u(r, θ)')
     plt.title('Rozwiązanie równania Laplace')
     plt.xlabel('x')
@@ -234,18 +217,16 @@ def visualize_solution(laplace_solution):
 
 
 if __name__ == "__main__":
-    N = 10
-    chunk_size = 10
-    nr = 100
-    ntheta = 300
+    nr, ntheta = 200, 250
+    print(f"Leci {nr} oraz {ntheta}")
+    N = 1000
+    chunk_size = 100
     r_min, r_max = 0, 1
 
     r = np.linspace(r_min, r_max, nr)
     theta = np.linspace(0, 2*np.pi, ntheta)
     dr = r[1] - r[0]
     dtheta = theta[1] - theta[0]
-    # dr = (r_max - r_min) / (nr - 1)
-    # dtheta = 2 * np.pi / ntheta
 
     # laplace_solutions, boundary_conditions = apply_boundary_conditions_constant_value(N, nr, ntheta, vmin=-100.0, vmax=100.0)
     laplace_solutions, boundary_conditions =  apply_boundary_conditions_sinusoidal(
@@ -261,7 +242,9 @@ if __name__ == "__main__":
                                                             r_min=0.1,
                                                             r_max=0.6
                                                             )
+    
     zero_circle_indices = (boundary_conditions[:, 3] * (nr - 1)).astype(np.int32)
+
 
     for start_idx in range(0, N, chunk_size):
         start_time = time.time()
@@ -272,15 +255,15 @@ if __name__ == "__main__":
 
 
     
-    for i in range(10):
-        visualize_solution(laplace_solution=laplace_solutions[i])
+    # for i in range(10):
+    #     visualize_solution(laplace_solution=laplace_solutions[i])
 
 
-    # save_path = 'C:/Users/Laptop/Desktop/magisterka/PINN/solutions/polar/sin_hole/'
-    # os.makedirs(save_path, exist_ok=True)
-    # laplace_solutions = laplace_solutions.astype(np.float32)
-    # boundary_conditions = boundary_conditions.astype(np.float32)
-    # np.savez_compressed(save_path + 'solutions.npz', laplace_solutions=laplace_solutions, boundary_conditions=boundary_conditions)
+    save_path = "/home/ml_master/projects/PINN/solutions/const_with_hole/"
+    os.makedirs(save_path, exist_ok=True)
+    laplace_solutions = laplace_solutions.astype(np.float32)
+    boundary_conditions = boundary_conditions.astype(np.float32)
+    np.savez_compressed(save_path + f'solutions_{nr}_{ntheta}.npz', laplace_solutions=laplace_solutions, boundary_conditions=boundary_conditions)
 
 
 
